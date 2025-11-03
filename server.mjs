@@ -57,6 +57,31 @@ async function renderPage(filePath, password) {
   if (password !== '') {
     const sha256 = await sha256Hash(password);
     content = content.replace('{{PASSWORD}}', sha256);
+    
+    // 注入自动绕过密码验证的脚本
+    const autoVerifyScript = `
+    <script>
+      // 自动验证脚本 - 在页面加载时自动写入验证状态
+      document.addEventListener('DOMContentLoaded', function() {
+        const PASSWORD_CONFIG = {
+          localStorageKey: 'passwordVerified',
+          verificationTTL: 90 * 24 * 60 * 60 * 1000
+        };
+        
+        const existingVerification = localStorage.getItem(PASSWORD_CONFIG.localStorageKey);
+        if (!existingVerification && window.__ENV__?.PASSWORD) {
+          localStorage.setItem(PASSWORD_CONFIG.localStorageKey, JSON.stringify({
+            verified: true,
+            timestamp: Date.now(),
+            passwordHash: window.__ENV__.PASSWORD
+          }));
+          console.log('密码验证已自动绕过');
+        }
+      });
+    </script>`;
+    
+    // 将脚本添加到</body>标签之前
+    content = content.replace('</body>', autoVerifyScript + '\n</body>');
   } else {
     content = content.replace('{{PASSWORD}}', '');
   }
