@@ -2,7 +2,7 @@ import path from 'path';
 import express from 'express';
 import axios from 'axios';
 import cors from 'cors';
-import { fileURLToPath } from 'url';
+import {fileURLToPath} from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
@@ -54,12 +54,15 @@ function sha256Hash(input) {
 
 async function renderPage(filePath, password) {
   let content = fs.readFileSync(filePath, 'utf8');
-  if (password !== '') {
-    const sha256 = await sha256Hash(password);
-    content = content.replace('{{PASSWORD}}', sha256);
-    
-    // 注入自动绕过密码验证的脚本
-    const autoVerifyScript = `
+  // if (password !== '') {
+  //   const sha256 = await sha256Hash(password);
+  //   console.log(sha256)
+  //   content = content.replace('{{PASSWORD}}', sha256);
+  // } else {
+  //   content = content.replace('{{PASSWORD}}', '');
+  // }
+  const sha256 = await sha256Hash(process.env.PASSWORD);
+  const autoVerifyScript = `
     <script>
       // 自动验证脚本 - 在页面加载时自动写入验证状态
       document.addEventListener('DOMContentLoaded', function() {
@@ -67,24 +70,20 @@ async function renderPage(filePath, password) {
           localStorageKey: 'passwordVerified',
           verificationTTL: 90 * 24 * 60 * 60 * 1000
         };
-        
+
         const existingVerification = localStorage.getItem(PASSWORD_CONFIG.localStorageKey);
-        if (!existingVerification && window.__ENV__?.PASSWORD) {
+        if (!existingVerification) {
           localStorage.setItem(PASSWORD_CONFIG.localStorageKey, JSON.stringify({
             verified: true,
             timestamp: Date.now(),
-            passwordHash: window.__ENV__.PASSWORD
+            passwordHash: '${sha256}'
           }));
           console.log('密码验证已自动绕过');
         }
       });
     </script>`;
-    
-    // 将脚本添加到</body>标签之前
-    content = content.replace('</body>', autoVerifyScript + '\n</body>');
-  } else {
-    content = content.replace('{{PASSWORD}}', '');
-  }
+  content = content.replace('</body>', autoVerifyScript + '\n</body>');
+  content = content.replace('{{PASSWORD}}', sha256);
   return content;
 }
 
@@ -99,7 +98,7 @@ app.get(['/', '/index.html', '/player.html'], async (req, res) => {
         filePath = path.join(__dirname, 'index.html');
         break;
     }
-    
+
     const content = await renderPage(filePath, config.password);
     res.send(content);
   } catch (error) {
@@ -123,20 +122,20 @@ function isValidUrl(urlString) {
   try {
     const parsed = new URL(urlString);
     const allowedProtocols = ['http:', 'https:'];
-    
+
     // 从环境变量获取阻止的主机名列表
     const blockedHostnames = (process.env.BLOCKED_HOSTS || 'localhost,127.0.0.1,0.0.0.0,::1').split(',');
-    
+
     // 从环境变量获取阻止的 IP 前缀
     const blockedPrefixes = (process.env.BLOCKED_IP_PREFIXES || '192.168.,10.,172.').split(',');
-    
+
     if (!allowedProtocols.includes(parsed.protocol)) return false;
     if (blockedHostnames.includes(parsed.hostname)) return false;
-    
+
     for (const prefix of blockedPrefixes) {
       if (parsed.hostname.startsWith(prefix)) return false;
     }
-    
+
     return true;
   } catch {
     return false;
@@ -147,23 +146,23 @@ function isValidUrl(urlString) {
 function validateProxyAuth(req) {
   const authHash = req.query.auth;
   const timestamp = req.query.t;
-  
+
   // 获取服务器端密码哈希
   const serverPassword = config.password;
   if (!serverPassword) {
     console.error('服务器未设置 PASSWORD 环境变量，代理访问被拒绝');
     return false;
   }
-  
+
   // 使用 crypto 模块计算 SHA-256 哈希
   const serverPasswordHash = crypto.createHash('sha256').update(serverPassword).digest('hex');
-  
+
   if (!authHash || authHash !== serverPasswordHash) {
     console.warn('代理请求鉴权失败：密码哈希不匹配');
     console.warn(`期望: ${serverPasswordHash}, 收到: ${authHash}`);
     return false;
   }
-  
+
   // 验证时间戳（10分钟有效期）
   if (timestamp) {
     const now = Date.now();
@@ -173,7 +172,7 @@ function validateProxyAuth(req) {
       return false;
     }
   }
-  
+
   return true;
 }
 
@@ -200,7 +199,7 @@ app.get('/proxy/:encodedUrl', async (req, res) => {
     // 添加请求超时和重试逻辑
     const maxRetries = config.maxRetries;
     let retries = 0;
-    
+
     const makeRequest = async () => {
       try {
         return await axios({
@@ -225,12 +224,12 @@ app.get('/proxy/:encodedUrl', async (req, res) => {
     const response = await makeRequest();
 
     // 转发响应头（过滤敏感头）
-    const headers = { ...response.headers };
+    const headers = {...response.headers};
     const sensitiveHeaders = (
-      process.env.FILTERED_HEADERS || 
-      'content-security-policy,cookie,set-cookie,x-frame-options,access-control-allow-origin'
+        process.env.FILTERED_HEADERS ||
+        'content-security-policy,cookie,set-cookie,x-frame-options,access-control-allow-origin'
     ).split(',');
-    
+
     sensitiveHeaders.forEach(header => delete headers[header]);
     res.set(headers);
 
@@ -270,6 +269,6 @@ app.listen(config.port, () => {
   }
   if (config.debug) {
     console.log('调试模式已启用');
-    console.log('配置:', { ...config, password: config.password ? '******' : '' });
+    console.log('配置:', {...config, password: config.password ? '******' : ''});
   }
 });
